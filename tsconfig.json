@@ -1,0 +1,13 @@
+{
+  "extends": "@eggjs/tsconfig",
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "declaration": false,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "useUnknownInCatchVariables": false
+  },
+  "exclude": [
+    "node_modules"
+  ]
+}

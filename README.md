@@ -1,6 +1,5 @@
 # server-template
-
-egg 开发服务端应用模版
+> egg 开发服务端应用模版（基于 [cnpmcore](https://github.com/cnpm/cnpmcore) 通用部分抽离出来）
 
 ## QuickStart
 

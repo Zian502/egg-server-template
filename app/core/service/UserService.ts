@@ -1,0 +1,134 @@
+import {
+  AccessLevel,
+  ContextProto,
+  EventBus,
+  Inject,
+} from '@eggjs/tegg';
+import crypto from 'crypto';
+import { NotFoundError, ForbiddenError } from 'egg-errors';
+import { UserRepository } from '../../repository/UserRepository';
+import { AbstractService } from '../../common/AbstractService';
+import { LoginResultCode } from '../../common/enum/User';
+import { integrity, checkIntegrity, randomToken, sha512 } from '../../common/UserUtil';
+import { Token as TokenEntity } from '../entity/Token';
+import { User as UserEntity } from '../entity/User';
+import { USER_ADD} from '../event';
+
+type CreateUser = {
+  name: string;
+  password: string;
+  email: string;
+  ip: string;
+};
+
+type LoginResult = {
+  code: LoginResultCode;
+  user?: UserEntity;
+  token?: TokenEntity;
+};
+
+type CreateTokenOptions = {
+  isReadonly?: boolean;
+  isAutomation?: boolean;
+  cidrWhitelist?: string[];
+};
+
+@ContextProto({
+  accessLevel: AccessLevel.PUBLIC,
+})
+export class UserService extends AbstractService {
+  @Inject()
+  private readonly userRepository: UserRepository;
+  @Inject()
+  private readonly eventBus: EventBus;
+
+  checkPassword(user: UserEntity, password: string): boolean {
+    const plain = `${user.passwordSalt}${password}`;
+    return checkIntegrity(plain, user.passwordIntegrity);
+  }
+
+  async login(name: string, password: string): Promise<LoginResult> {
+    const user = await this.userRepository.findUserByName(name);
+    if (!user) return { code: LoginResultCode.UserNotFound };
+    if (!this.checkPassword(user, password)) {
+      return { code: LoginResultCode.Fail };
+    }
+    const token = await this.createToken(user.userId);
+    this.eventBus.emit(USER_ADD, name, password);
+    return { code: LoginResultCode.Success, user, token };
+  }
+
+  async create(createUser: CreateUser) {
+    const passwordSalt = crypto.randomBytes(30).toString('hex');
+    const plain = `${passwordSalt}${createUser.password}`;
+    const passwordIntegrity = integrity(plain);
+    const userEntity = UserEntity.create({
+      name: createUser.name,
+      email: createUser.email,
+      ip: createUser.ip,
+      passwordSalt,
+      passwordIntegrity,
+    });
+    await this.userRepository.saveUser(userEntity);
+    const token = await this.createToken(userEntity.userId);
+    return { user: userEntity, token };
+  }
+
+  async savePublicUser(name: string, email: string): Promise<{ changed: boolean, user: UserEntity }> {
+    const storeName = name.startsWith('name:') ? name : `npm:${name}`;
+    let user = await this.userRepository.findUserByName(storeName);
+    if (!user) {
+      const passwordSalt = crypto.randomBytes(20).toString('hex');
+      const passwordIntegrity = integrity(passwordSalt);
+      user = UserEntity.create({
+        name: storeName,
+        email,
+        ip: '',
+        passwordSalt,
+        passwordIntegrity,
+      });
+      await this.userRepository.saveUser(user);
+      return { changed: true, user };
+    }
+    if (user.email === email) {
+      // skip
+      return { changed: false, user };
+    }
+    user.email = email;
+    await this.userRepository.saveUser(user);
+    return { changed: true, user };
+  }
+
+
+  async createToken(userId: string, options: CreateTokenOptions = {}) {
+    const token = randomToken(this.config.cnpmcore.name);
+    const tokenKey = sha512(token);
+    const tokenMark = token.substring(0, token.indexOf('_') + 4);
+    const tokenEntity = TokenEntity.create({
+      tokenKey,
+      tokenMark,
+      userId,
+      cidrWhitelist: options.cidrWhitelist ?? [],
+      isReadonly: options.isReadonly ?? false,
+      isAutomation: options.isAutomation ?? false,
+    });
+    await this.userRepository.saveToken(tokenEntity);
+    tokenEntity.token = token;
+    return tokenEntity;
+  }
+
+  async removeToken(userId: string, tokenKeyOrTokenValue: string) {
+    let token = await this.userRepository.findTokenByTokenKey(tokenKeyOrTokenValue);
+    if (!token) {
+      // tokenKeyOrTokenValue is token value, sha512 and find again
+      token = await this.userRepository.findTokenByTokenKey(sha512(tokenKeyOrTokenValue));
+    }
+    if (!token) {
+      throw new NotFoundError(`Token "${tokenKeyOrTokenValue}" not exists`);
+    }
+    if (token.userId !== userId) {
+      throw new ForbiddenError(`Not authorized to remove token "${tokenKeyOrTokenValue}"`);
+    }
+    await this.userRepository.removeToken(token.tokenId);
+  }
+}
