@@ -56,8 +56,8 @@
     "node": ">=14.0.0"
   },
   "scripts": {
-    "start": "egg-scripts start --daemon --title=egg-server-server-template",
-    "stop": "egg-scripts stop --title=egg-server-server-template",
+    "start": "egg-scripts start --daemon --title=egg-server-template",
+    "stop": "egg-scripts stop --title=egg-server-template",
     "dev": "egg-bin dev",
     "debug": "egg-bin debug",
     "test": "npm run lint -- --fix && npm run test-local",
